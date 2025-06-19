@@ -1,4 +1,4 @@
-public import java.util.Scanner;
+import java.util.Scanner;
 
 public class ShortestLongestFinder {
 
@@ -92,7 +92,4 @@ public class ShortestLongestFinder {
 
         sc.close();
     }
-}
- {
-    
 }
