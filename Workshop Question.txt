@@ -1,0 +1,359 @@
+Workshop Question
+
+Smart City Transport & Service Management System 
+Scenario: 
+The City Council wants to launch a Smart City Transport & Service Management System that integrates buses, metros, taxis, and EV charging stations. The goal is to optimize routes, manage schedules, process passenger data, and provide real-time dashboards. The solution must use Java 8 features to be modern, clean, and extensible. 
+Breakdown of Feature Usage: 
+1. Lambda Expressions – 
+○ Used for filtering and sorting transport schedules based on user preferences (e.g., earliest departure time, lowest fare). 
+2. Method References – 
+○ For quick printing of available services, logging, or invoking static utility methods for fare calculations. 
+3. Default Methods in Interfaces – 
+○ Interface TransportService defines default methods like 
+printServiceDetails() for all transport types. 
+4. Static Methods in Interfaces – 
+○ Static method calculateDistance() in GeoUtils interface to compute distance between two locations. 
+5. Stream APIs – 
+○ Used to group and aggregate passenger data, calculate revenue, and find top-used routes. 
+6. ForEach() Method – 
+○ Display live schedules of all transport services to the dashboard.
+7. Collectors - Roles and Capabilities – 
+○ groupingBy() for grouping passengers by route. 
+○ partitioningBy() for separating peak vs. non-peak time trips. 
+○ summarizingDouble() for total and average fares collected. 
+8. Defining and Implementing Interfaces – 
+○ TransportService implemented by BusService, MetroService, TaxiService. 
+9. Functional Interfaces – 
+○ FareCalculator functional interface with a single abstract method calculateFare(), implemented using lambdas. 
+10. Marker Interfaces – 
+○ EmergencyService marker interface for services that can bypass traffic rules (e.g., Ambulance, Fire Service). 
+Goal: The final system should be able to: 
+● Filter, group, and summarize transport data in real-time. 
+● Dynamically display schedules on dashboards. 
+● Easily extend to new services like ferry or bike rentals by just implementing the right interfaces. 
+Flow in Real-Time Usage 
+1. Passenger books a trip → Lambda filters and sorts available services. 2. Dashboard updates live → ForEach displays current active services. 3. Revenue reports generated → Collectors group and summarize data. 4. System expansion → Adding FerryService just implements the interfaces, default methods, and optional overrides. 
+5. Emergency scenario → Marker interface detects and prioritizes emergency services.
+
+
+
+
+import java.time.*;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.*;
+import java.util.logging.Logger;
+import java.util.stream.*;
+
+/**
+ * Smart City Transport & Service Management System — Java 8 features demo
+ *
+ * Features used:
+ * - Lambdas & method references (filtering/sorting/logging)
+ * - Default & static methods in interfaces
+ * - Streams, forEach, Collectors (groupingBy, partitioningBy, summarizingDouble)
+ * - Functional interface (FareCalculator)
+ * - Marker interface (EmergencyService)
+ * - Clean, extensible design: add a new service by implementing TransportService
+ */
+public class SmartCityTransportDemo {
+    private static final Logger LOG = Logger.getLogger("SmartCity");
+
+    public static void main(String[] args) {
+        // Seed demo data
+        CityRegistry registry = new CityRegistry();
+        registry.register(new BusService("B-21", "BlueLine", 50));
+        registry.register(new MetroService("M-6", "GreenMetro", 300));
+        registry.register(new TaxiService("TX-9", "CityCabs", 4));
+        registry.register(new EVChargingService("EV-4", "VoltNet", 8));
+        registry.register(new AmbulanceService("AMB-1", "CityHealth", 2)); // marker EmergencyService
+
+        // Generate sample schedules for today
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime end = now.plusHours(6);
+        registry.generateSampleSchedules(now, end);
+
+        // 1) Passenger books a trip -> Lambda filters and sorts available services
+        TripRequest request = new TripRequest(
+                new GeoPoint(28.6129, 77.2295), // India Gate
+                new GeoPoint(28.6448, 77.2167), // Connaught Place
+                now.plusMinutes(10),
+                SortBy.EARLIEST_DEPARTURE
+        );
+
+        System.out.println("\n=== 1) Booking: filter & sort options ===");
+        List<ServiceOption> options = registry.findOptions(request,
+                s -> s.isActive() && s.departure.isAfter(now)); // lambda filter
+
+        // sort with lambda based on preference
+        Comparator<ServiceOption> cmp = request.sortBy == SortBy.EARLIEST_DEPARTURE
+                ? Comparator.comparing(o -> o.departure)
+                : Comparator.comparingDouble(o -> o.fare);
+
+        List<ServiceOption> sorted = options.stream().sorted(cmp).collect(Collectors.toList());
+        sorted.forEach(System.out::println); // method reference
+
+        // Pick top choice and compute fare via functional interface
+        FareCalculator fareCalculator = (trip, opt) -> {
+            double distanceKm = GeoUtils.calculateDistance(trip.from, trip.to);
+            double base = opt.type.baseFare + (distanceKm * opt.type.perKm);
+            // simple peak time multiplier example
+            boolean peak = TripAnalytics.isPeak(opt.departure);
+            return peak ? base * 1.25 : base;
+        };
+
+        sorted.stream().findFirst().ifPresent(best -> {
+            double fare = fareCalculator.calculateFare(request, best);
+            System.out.println("\nChosen option: " + best.id + " | Fare: ₹" + String.format(Locale.US, "%.2f", fare));
+        });
+
+        // 2) Dashboard updates live -> forEach displays current active services
+        System.out.println("\n=== 2) Live Dashboard: active services ===");
+        registry.allServices().forEach(TransportService::printServiceDetails); // method reference to default method
+
+        // Also display active schedules (forEach)
+        registry.getAllSchedules().stream()
+                .filter(ServiceOption::isActive)
+                .sorted(Comparator.comparing(o -> o.departure))
+                .forEach(o -> System.out.println(" • " + o.brief()));
+
+        // 3) Revenue reports -> Collectors group & summarize
+        System.out.println("\n=== 3) Revenue Reports (simulated fares collected) ===");
+        // Simulate ticket sales as completed trips with fares
+        List<CompletedTrip> completed = TripAnalytics.simulateCompletedTrips(registry.getAllSchedules(), fareCalculator, request);
+
+        // groupingBy route
+        Map<String, List<CompletedTrip>> byRoute = completed.stream()
+                .collect(Collectors.groupingBy(t -> t.routeId));
+
+        byRoute.forEach((route, trips) -> {
+            DoubleSummaryStatistics stats = trips.stream()
+                    .collect(Collectors.summarizingDouble(t -> t.fare));
+            System.out.println("Route " + route +
+                    " -> trips: " + stats.getCount() +
+                    ", total ₹" + String.format(Locale.US, "%.2f", stats.getSum()) +
+                    ", avg ₹" + String.format(Locale.US, "%.2f", stats.getAverage()));
+        });
+
+        // partitioningBy peak vs non-peak
+        Map<Boolean, List<CompletedTrip>> peakSplit = completed.stream()
+                .collect(Collectors.partitioningBy(t -> TripAnalytics.isPeak(t.departure)));
+        System.out.println("\nPeak Trips: " + peakSplit.getOrDefault(true, Collections.emptyList()).size());
+        System.out.println("Non-Peak Trips: " + peakSplit.getOrDefault(false, Collections.emptyList()).size());
+
+        // Top used routes (by count)
+        System.out.println("\nTop Routes by usage:");
+        byRoute.entrySet().stream()
+                .sorted(Comparator.comparingInt((Map.Entry<String, List<CompletedTrip>> e) -> e.getValue().size()).reversed())
+                .limit(5)
+                .forEach(e -> System.out.println(" • " + e.getKey() + " : " + e.getValue().size() + " trips"));
+
+        // 4) System expansion -> Add FerryService by just implementing TransportService
+        System.out.println("\n=== 4) Extensibility: Adding FerryService dynamically ===");
+        TransportService ferry = new FerryService("FY-2", "RiverRide", 120);
+        registry.register(ferry);
+        registry.generateSampleSchedules(now, now.plusHours(2), Collections.singletonList(ferry));
+        ferry.printServiceDetails(); // uses default method
+
+        // 5) Emergency scenario -> marker interface detection & prioritization
+        System.out.println("\n=== 5) Emergency Prioritization ===");
+        registry.allServices().stream()
+                .filter(s -> s instanceof EmergencyService)
+                .forEach(s -> System.out.println("EMERGENCY PRIORITY ACTIVE -> " + s.getId() + " (" + s.getOperator() + ")"));
+
+        // Quick logging with method reference
+        registry.allServices().stream().map(TransportService::getOperator).distinct().forEach(LOG::info);
+    }
+}
+
+// ===================== Core domain =====================
+
+interface TransportService {
+    String getId();
+    String getOperator();
+    TransportType getType();
+    int getCapacity();
+
+    // default method shared by all services
+    default void printServiceDetails() {
+        System.out.println("[Service] " + getType() + " | ID=" + getId() + " | Operator=" + getOperator() + " | Cap=" + getCapacity());
+    }
+}
+
+// Marker interface (no methods)
+interface EmergencyService { }
+
+// Functional interface for fare calculation
+@FunctionalInterface
+interface FareCalculator {
+    double calculateFare(TripRequest trip, ServiceOption option);
+}
+
+// Utility interface with static method
+interface GeoUtils {
+    // Haversine distance in km
+    static double calculateDistance(GeoPoint a, GeoPoint b) {
+        final double R = 6371.0; // km
+        double dLat = Math.toRadians(b.lat - a.lat);
+        double dLon = Math.toRadians(b.lon - a.lon);
+        double lat1 = Math.toRadians(a.lat);
+        double lat2 = Math.toRadians(b.lat);
+        double h = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)*Math.sin(dLon/2);
+        double c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1-h));
+        return R * c;
+    }
+}
+
+// ===================== Implementations =====================
+
+class BusService implements TransportService {
+    private final String id; private final String operator; private final int cap;
+    BusService(String id, String operator, int cap) { this.id=id; this.operator=operator; this.cap=cap; }
+    public String getId(){return id;} public String getOperator(){return operator;} public TransportType getType(){return TransportType.BUS;} public int getCapacity(){return cap;}
+}
+class MetroService implements TransportService {
+    private final String id; private final String operator; private final int cap;
+    MetroService(String id, String operator, int cap) { this.id=id; this.operator=operator; this.cap=cap; }
+    public String getId(){return id;} public String getOperator(){return operator;} public TransportType getType(){return TransportType.METRO;} public int getCapacity(){return cap;}
+}
+class TaxiService implements TransportService {
+    private final String id; private final String operator; private final int cap;
+    TaxiService(String id, String operator, int cap) { this.id=id; this.operator=operator; this.cap=cap; }
+    public String getId(){return id;} public String getOperator(){return operator;} public TransportType getType(){return TransportType.TAXI;} public int getCapacity(){return cap;}
+}
+class EVChargingService implements TransportService {
+    private final String id; private final String operator; private final int cap;
+    EVChargingService(String id, String operator, int cap) { this.id=id; this.operator=operator; this.cap=cap; }
+    public String getId(){return id;} public String getOperator(){return operator;} public TransportType getType(){return TransportType.EV_CHARGING;} public int getCapacity(){return cap;}
+}
+class AmbulanceService implements TransportService, EmergencyService {
+    private final String id; private final String operator; private final int cap;
+    AmbulanceService(String id, String operator, int cap) { this.id=id; this.operator=operator; this.cap=cap; }
+    public String getId(){return id;} public String getOperator(){return operator;} public TransportType getType(){return TransportType.AMBULANCE;} public int getCapacity(){return cap;}
+}
+class FerryService implements TransportService {
+    private final String id; private final String operator; private final int cap;
+    FerryService(String id, String operator, int cap) { this.id=id; this.operator=operator; this.cap=cap; }
+    public String getId(){return id;} public String getOperator(){return operator;} public TransportType getType(){return TransportType.FERRY;} public int getCapacity(){return cap;}
+}
+
+enum TransportType {
+    BUS(10, 2.0), METRO(15, 1.2), TAXI(30, 12.0), EV_CHARGING(0, 0.0), AMBULANCE(0, 0.0), FERRY(12, 2.5);
+    final double baseFare; final double perKm;
+    TransportType(double baseFare, double perKm){ this.baseFare=baseFare; this.perKm=perKm; }
+}
+
+enum SortBy { EARLIEST_DEPARTURE, LOWEST_FARE }
+
+// ===================== Scheduling & Trips =====================
+
+class ServiceOption {
+    final String id;           // e.g., B-21-08:30
+    final TransportType type;
+    final String operator;
+    final String routeId;      // e.g., R-Connaught-IndiaGate
+    final LocalDateTime departure;
+    final LocalDateTime arrival;
+    final double fare;         // displayed fare
+    final boolean active;
+
+    ServiceOption(String id, TransportType type, String operator, String routeId,
+                  LocalDateTime departure, LocalDateTime arrival, double fare, boolean active) {
+        this.id=id; this.type=type; this.operator=operator; this.routeId=routeId; this.departure=departure; this.arrival=arrival; this.fare=fare; this.active=active;
+    }
+    boolean isActive(){ return active; }
+    Duration duration(){ return Duration.between(departure, arrival); }
+    String brief(){ return id + " | " + type + " | " + routeId + " | " + time(departure) + "→" + time(arrival) + " | ₹" + String.format(Locale.US, "%.0f", fare); }
+    public String toString(){ return "ServiceOption{" + brief() + "}"; }
+    private static String time(LocalDateTime t){ return t.format(DateTimeFormatter.ofPattern("HH:mm")); }
+}
+
+class TripRequest {
+    final GeoPoint from; final GeoPoint to; final LocalDateTime desiredDeparture; final SortBy sortBy;
+    TripRequest(GeoPoint from, GeoPoint to, LocalDateTime desiredDeparture, SortBy sortBy){
+        this.from=from; this.to=to; this.desiredDeparture=desiredDeparture; this.sortBy=sortBy;
+    }
+}
+
+class CompletedTrip {
+    final String serviceId; final String routeId; final double fare; final LocalDateTime departure; final TransportType type;
+    CompletedTrip(String serviceId, String routeId, double fare, LocalDateTime departure, TransportType type){
+        this.serviceId=serviceId; this.routeId=routeId; this.fare=fare; this.departure=departure; this.type=type;
+    }
+}
+
+class GeoPoint { final double lat, lon; GeoPoint(double lat, double lon){ this.lat=lat; this.lon=lon; } }
+
+// ===================== Registry & Analytics =====================
+
+class CityRegistry {
+    private final List<TransportService> services = new ArrayList<>();
+    private final List<ServiceOption> schedules = new ArrayList<>();
+
+    void register(TransportService s) { services.add(s); }
+    List<TransportService> allServices(){ return Collections.unmodifiableList(services); }
+
+    // Create options across all (or provided) services in a window
+    void generateSampleSchedules(LocalDateTime from, LocalDateTime to) {
+        generateSampleSchedules(from, to, services);
+    }
+
+    void generateSampleSchedules(LocalDateTime from, LocalDateTime to, List<TransportService> target) {
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        for (TransportService s : target) {
+            // For EV charging, treat like time slots instead of routes
+            int count = 3 + rnd.nextInt(3);
+            for (int i = 0; i < count; i++) {
+                LocalDateTime dep = from.plusMinutes(rnd.nextInt((int)Duration.between(from, to).toMinutes()));
+                LocalDateTime arr = dep.plusMinutes(20 + rnd.nextInt(60));
+                String route = buildRoute(s.getType());
+                double distKm = 5 + rnd.nextDouble(15);
+                double fare = s.getType() == TransportType.EV_CHARGING ? 0 : s.getType().baseFare + distKm * s.getType().perKm;
+                boolean active = rnd.nextBoolean();
+                String id = s.getId() + "-" + dep.format(DateTimeFormatter.ofPattern("HHmm"));
+                schedules.add(new ServiceOption(id, s.getType(), s.getOperator(), route, dep, arr, fare, active));
+            }
+        }
+    }
+
+    private String buildRoute(TransportType type) {
+        String[] hubs = {"Connaught", "IndiaGate", "Airport", "OldDelhi", "NoidaSec18", "Gurgaon"};
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        String a = hubs[rnd.nextInt(hubs.length)];
+        String b = hubs[rnd.nextInt(hubs.length)];
+        while (Objects.equals(a, b)) b = hubs[rnd.nextInt(hubs.length)];
+        return "R-" + a + "-" + b + (type==TransportType.EV_CHARGING?"-Slot":"");
+    }
+
+    List<ServiceOption> findOptions(TripRequest req, Predicate<ServiceOption> extraFilter) {
+        return schedules.stream()
+                .filter(s -> !s.departure.isBefore(req.desiredDeparture))
+                .filter(extraFilter)
+                .collect(Collectors.toList());
+    }
+
+    List<ServiceOption> getAllSchedules(){ return Collections.unmodifiableList(schedules); }
+}
+
+class TripAnalytics {
+    static boolean isPeak(LocalDateTime t){
+        int h = t.getHour();
+        return (h >= 8 && h <= 11) || (h >= 17 && h <= 20);
+    }
+
+    static List<CompletedTrip> simulateCompletedTrips(List<ServiceOption> options, FareCalculator calc, TripRequest sampleReq){
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        return options.stream()
+                .filter(o -> o.type != TransportType.EV_CHARGING) // ignore charging slots for revenue
+                .limit(100)
+                .map(o -> {
+                    double f = calc.calculateFare(sampleReq, o);
+                    // add small random variance
+                    f = Math.max(0, f + rnd.nextDouble(-5, 12));
+                    return new CompletedTrip(o.id, o.routeId, f, o.departure, o.type);
+                })
+                .collect(Collectors.toList());
+    }
+}
+
